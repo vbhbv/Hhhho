@@ -1,56 +1,110 @@
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-from edge_tts import Communicate, list_voices
+import telebot
+from google import genai
+from google.genai.errors import APIError
 
-# احصل على التوكن من متغيرات البيئة
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# -------------------------------------------------------------
+# 1. الإعدادات والتهيئات
+# -------------------------------------------------------------
 
-# قائمة الأصوات المتاحة (نماذج عربية حديثة)
-VOICES = {
-    "male": "ar-SamiNeural",
-    "female": "ar-HalaNeural"
-}
+# التوكن الخاص ببوت تيليجرام (مضمَّن مباشرة أو يفضل وضعه كمتغير بيئة)
+BOT_TOKEN = '6807502954:AAH5tOwXCjRXtF65wQFEDSkYeFBYIgUjblg' 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "مرحباً! أرسل لي نصاً وسأحولّه إلى صوت.\n"
-        "لإختيار الصوت استخدم: /voice male أو /voice female\n"
-        "افتراضي: female"
-    )
+# مفتاح API الخاص بـ Gemini. 
+# يجب الحصول عليه من Google AI Studio ووضعه كمتغير بيئة على Railway.
+# عند التشغيل محليًا، يمكنك تعيينه مباشرة أو عبر متغير بيئة.
+# سنقوم بالتحميل التلقائي من متغير البيئة 'GEMINI_API_KEY'
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# اختيار الصوت
-async def set_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and context.args[0].lower() in VOICES:
-        context.user_data["voice"] = context.args[0].lower()
-        await update.message.reply_text(f"تم اختيار الصوت: {context.args[0].lower()}")
-    else:
-        await update.message.reply_text("الصوت غير موجود. الخيارات: male, female")
+if not BOT_TOKEN:
+    print("❌ خطأ فادح: توكن تيليجرام غير موجود.")
+    exit(1)
 
-# تحويل النص إلى صوت
-async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    voice_choice = context.user_data.get("voice", "female")
-    voice_name = VOICES[voice_choice]
+if not GEMINI_API_KEY:
+    print("❌ خطأ فادح: مفتاح GEMINI_API_KEY غير موجود. لن يعمل البوت بدون هذا المفتاح.")
+    # لا نخرج، لكن سنرسل رسالة خطأ عند محاولة استخدام البوت
+    pass
+
+bot = telebot.TeleBot(BOT_TOKEN)
+client = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        print("✅ تم تهيئة عميل Gemini API بنجاح.")
+    except Exception as e:
+        print(f"❌ فشل تهيئة عميل Gemini: {e}")
+        client = None
+
+# التعليمات البرمجية التي تُوجه نموذج Gemini لأداء مهمة الإعراب
+SYSTEM_PROMPT = (
+    "أنت مدقق لغوي ومعلم نحو عربي قدير ومتخصص في الإعراب. "
+    "مهمتك هي إعراب الجملة التي يرسلها المستخدم إعراباً تفصيلياً وشاملاً. "
+    "يجب أن يكون الإعراب منظماً في شكل قائمة نقطية واضحة (Markdown), ويجب أن تستخدم المصطلحات النحوية الفصحى. "
+    "لا تضف أي مقدمات أو خاتمات للرد، فقط ابدأ بالإعراب مباشرةً."
+)
+
+# -------------------------------------------------------------
+# 2. وظيفة معالجة الإعراب
+# -------------------------------------------------------------
+
+def get_grammar_analysis(text):
+    """
+    يتواصل مع Gemini API لطلب الإعراب التفصيلي للنص.
+    """
+    if not client:
+        return "❌ عذراً، لم يتم إعداد مفتاح Gemini API بشكل صحيح على الخادم."
 
     try:
-        communicate = Communicate(text, voice_name)
-        file_path = f"tts_{update.message.message_id}.mp3"
-        await communicate.save(file_path)
-        await update.message.reply_audio(audio=open(file_path, "rb"))
-        os.remove(file_path)  # حذف الملف بعد الإرسال
+        # إرسال المهمة والتعليمات إلى النموذج
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', # نموذج سريع ومناسب لهذه المهمة
+            contents=text,
+            config={"system_instruction": SYSTEM_PROMPT}
+        )
+        return response.text
+    except APIError as e:
+        print(f"❌ خطأ في Gemini API: {e}")
+        return "❌ عذراً، واجهت خطأً في الاتصال بخدمة الذكاء الاصطناعي. قد تكون الحصة المجانية قد استُنفدت."
     except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ أثناء التحويل:\n{str(e)}")
+        print(f"❌ خطأ عام: {e}")
+        return "❌ حدث خطأ غير متوقع أثناء معالجة طلبك."
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# -------------------------------------------------------------
+# 3. وظائف بوت تيليجرام
+# -------------------------------------------------------------
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("voice", set_voice))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tts))
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, 
+                 "👋 مرحباً بك في بوت الإعراب الذكي!.\n"
+                 "أرسل لي أي جملة عربية وسأقوم بإعرابها إعراباً تفصيلياً وشاملاً لك.")
 
-    print("البوت جاهز للعمل!")
-    app.run_polling()
+@bot.message_handler(content_types=['text'])
+def handle_grammar_request(message):
+    user_text = message.text
+    
+    if len(user_text) < 3 or len(user_text) > 500: 
+        bot.reply_to(message, "⚠️ يرجى إرسال جملة عربية واضحة تتراوح بين 3 و 500 حرف.")
+        return
 
-if __name__ == "__main__":
-    main()
+    # رسالة الانتظار
+    status_message = bot.reply_to(message, "⏳ جارٍ تحليل الجملة نحويًا...")
+
+    try:
+        # الحصول على الإعراب من Gemini
+        analysis_result = get_grammar_analysis(user_text)
+        
+        # إرسال النتيجة
+        bot.edit_message_text(analysis_result, status_message.chat.id, status_message.message_id, parse_mode='Markdown')
+
+    except Exception as e:
+        print(f"❌ خطأ أثناء المعالجة: {e}")
+        bot.edit_message_text("❌ حدث خطأ غير متوقع.", status_message.chat.id, status_message.message_id)
+
+# تشغيل البوت
+if __name__ == '__main__':
+    print("🚀 بدء تشغيل بوت الإعراب...")
+    try:
+        bot.infinity_polling()
+    except Exception as e:
+        print(f"❌ فشل تشغيل البوت: {e}")
