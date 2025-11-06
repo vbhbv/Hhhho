@@ -1,2 +1,2 @@
-python-telegram-bot==20.8
-openai==1.48.0
+python-telegram-bot==22.5
+edge-tts==1.2.2
