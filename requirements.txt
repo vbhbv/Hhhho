@@ -1,2 +1,3 @@
 python-telegram-bot==22.5
-edge-tts==4.0.10
+edge-tts
+asyncio
