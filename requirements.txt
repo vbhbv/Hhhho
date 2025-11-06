@@ -1,3 +1,2 @@
 python-telegram-bot==20.8
-gtts
-aiohttp
+openai==1.48.0
