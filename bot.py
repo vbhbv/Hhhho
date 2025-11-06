@@ -1,57 +1,56 @@
 import os
 import asyncio
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import edge_tts
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # ضع التوكن في متغير البيئة على Railway
+# متغير البيئة لرمز البوت
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-# قائمة أصوات عربية متاحة
-ARABIC_VOICES = [
-    "ar-SY-AhmedNeural",   # صوت رجل
-    "ar-SY-HalaNeural"     # صوت امرأة
-]
+# قائمة الأصوات العربية المتاحة
+VOICES = {
+    "female": "ar-SY-SalmaNeural",
+    "male": "ar-SY-HamedNeural"
+}
 
-# ===== رسالة البدء =====
-async def start(update: Update, context):
+OUTPUT_FILE = "/app/output.mp3"  # مسار ثابت على Railway
+
+# دالة التحويل للنطق
+async def text_to_speech(text: str, voice_name: str):
+    if not text.strip():
+        raise ValueError("النص فارغ!")
+    communicate = edge_tts.Communicate(text, VOICES.get(voice_name, VOICES["female"]))
+    await communicate.save(OUTPUT_FILE)
+
+# أوامر البوت
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔥 مرحباً بك في بوت تحويل النص إلى صوت 🔥\n\n"
-        "أرسل لي أي نص بالعربية وسأقوم بتحويله إلى صوت واضح جدًا 🎙️"
+        "مرحبًا! أرسل لي أي نص وسأحوّله لصوت عربي.\n"
+        "للاختيار بين صوت رجل أو امرأة، اكتب: /voice male أو /voice female"
     )
 
-# ===== دالة تحويل النص إلى صوت =====
-async def text_to_speech(text: str, voice: str, filename: str):
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(filename)
+async def set_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args and context.args[0].lower() in VOICES:
+        context.user_data["voice"] = context.args[0].lower()
+        await update.message.reply_text(f"تم تغيير الصوت إلى {context.args[0].lower()}")
+    else:
+        await update.message.reply_text("الرجاء اختيار صوت 'male' أو 'female'")
 
-# ===== التعامل مع الرسائل =====
-async def handle_message(update: Update, context):
-    text = update.message.text.strip()
-    if not text:
-        await update.message.reply_text("⚠️ أرسل نصًا لتحويله إلى صوت.")
-        return
-
-    await update.message.reply_text("⏳ جاري تحويل النص إلى صوت...")
-
-    # اختيار صوت عشوائي من الأصوات المتاحة
-    voice = ARABIC_VOICES[0] if len(text) % 2 == 0 else ARABIC_VOICES[1]
-    filename = "output.mp3"
-
+async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    voice = context.user_data.get("voice", "female")
     try:
-        await text_to_speech(text, voice, filename)
-        # إرسال الملف للمستخدم
-        with open(filename, "rb") as audio_file:
-            await update.message.reply_audio(audio_file, caption="✅ تم تحويل النص إلى صوت!")
-        os.remove(filename)
+        await text_to_speech(text, voice)
+        await update.message.reply_audio(audio=open(OUTPUT_FILE, "rb"))
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ أثناء تحويل النص: {e}")
 
-# ===== التشغيل =====
+# تهيئة البوت
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 البوت يعمل الآن...")
+    app.add_handler(CommandHandler("voice", set_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, speak))
     app.run_polling()
 
 if __name__ == "__main__":
