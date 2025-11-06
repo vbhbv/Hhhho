@@ -3,38 +3,38 @@ import time
 import threading
 
 # -------------------------------------------------------------
-# 1. متغيرات مشتركة (يتم تهيئتها من ملف telegram_grammar_bot.py)
+# 1. متغيرات مشتركة (يتم تهيئتها من ملف bot.py)
 # -------------------------------------------------------------
 
 bot = None
-ADMIN_ID = 6166700051 # مُعرف المسؤول الثابت
+ADMIN_ID = 6166700051 # مُعرف المسؤول الثابت الذي طلبته
 FORCED_CHANNEL_ID = None
 FORCED_CHANNEL_LINK = None
 user_ids = set()
 save_users_func = None
+send_welcome_func = None # دالة الترحيب من bot.py
 broadcasting = False
 
-def init_admin(main_bot, channel_id, channel_link, save_func):
-    """تهيئة المتغيرات المشتركة من الملف الرئيسي."""
-    global bot, FORCED_CHANNEL_ID, FORCED_CHANNEL_LINK, save_users_func
+def init_admin(main_bot, channel_id, channel_link, save_func, welcome_func):
+    """تهيئة المتغيرات المشتركة من الملف الرئيسي (bot.py)."""
+    global bot, FORCED_CHANNEL_ID, FORCED_CHANNEL_LINK, save_users_func, send_welcome_func
     bot = main_bot
     FORCED_CHANNEL_ID = channel_id
     FORCED_CHANNEL_LINK = channel_link
     save_users_func = save_func
+    send_welcome_func = welcome_func
     
-    # تسجيل معالجات الأوامر (Handlers) بعد تهيئة البوت
+    # **التسجيل الحاسم:** تسجيل معالجات الأوامر بعد تهيئة البوت
     register_admin_handlers()
 
 def is_subscribed_admin_check(user_id):
-    """وظيفة مساعدة للتحقق من الاشتراك (مكررة ولكن ضرورية للفصل)."""
-    if not FORCED_CHANNEL_ID:
-        return True
-
+    """وظيفة مساعدة للتحقق من الاشتراك."""
+    if not FORCED_CHANNEL_ID: return True
     try:
         member = bot.get_chat_member(FORCED_CHANNEL_ID, user_id)
         return member.status in ['member', 'creator', 'administrator']
-    except Exception:
-        return True
+    except Exception: return True
+
 
 # -------------------------------------------------------------
 # 2. لوحة التحكم والإحصائيات
@@ -77,6 +77,7 @@ def start_broadcast_task(message):
             break
         user_id = int(user_id_str)
         try:
+            # استخدام copy_message لإرسال الرسالة كما هي
             bot.copy_message(user_id, message.chat.id, message.message_id)
             success_count += 1
             time.sleep(0.05)
@@ -105,7 +106,6 @@ def callback_admin_handler(call):
     chat_id = call.message.chat.id
     
     if call.data == 'stats':
-        # عرض الإحصائيات
         stats_msg = f"📊 إحصائيات البوت:\n" \
                     f"عدد المستخدمين النشطين: {len(user_ids)}\n" \
                     f"معرف المسؤول: {ADMIN_ID}\n" \
@@ -125,11 +125,9 @@ def callback_admin_handler(call):
             chat_id, call.message.message_id, parse_mode='Markdown'
         )
         
-        # استخدام register_next_step_handler
         bot.register_next_step_handler(sent, start_broadcast_task)
 
     elif call.data == 'forced_sub_setup':
-        # إعداد الاشتراك الإجباري
         sub_status = "مُفعل" if FORCED_CHANNEL_ID else "غير مُفعل"
         setup_msg = (
             f"🔗 إعدادات الاشتراك الإجباري:\n"
@@ -140,9 +138,11 @@ def callback_admin_handler(call):
         bot.edit_message_text(setup_msg, chat_id, call.message.message_id, parse_mode='Markdown', reply_markup=get_admin_markup())
     
     elif call.data == 'check_sub':
-        # التحقق من الاشتراك
         if is_subscribed_admin_check(chat_id):
             bot.edit_message_text("✅ تم التحقق، يمكنك الآن استخدام البوت.", chat_id, call.message.message_id)
+            # استدعاء دالة الترحيب من bot.py لتمكين المستخدم من الاستخدام
+            if send_welcome_func:
+                 send_welcome_func(call.message) 
         else:
             bot.answer_callback_query(call.id, "❌ لم يتم تأكيد اشتراكك بعد. يرجى الاشتراك والضغط مرة أخرى.")
     
