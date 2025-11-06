@@ -1,56 +1,88 @@
-import os
+# bot.py
 import asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import edge_tts
+import os
 
-# متغير البيئة لرمز البوت
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+# === إعدادات البوت ===
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضع التوكن في متغيرات Railway
 
-# قائمة الأصوات العربية المتاحة
+# أصوات عربية حديثة
 VOICES = {
     "female": "ar-SY-SalmaNeural",
     "male": "ar-SY-HamedNeural"
 }
 
-OUTPUT_FILE = "/app/output.mp3"  # مسار ثابت على Railway
+# تذكير بسيط لكل صوت
+VOICE_NAMES = {
+    "female": "أنثى - SalmaNeural",
+    "male": "ذكر - HamedNeural"
+}
 
-# دالة التحويل للنطق
-async def text_to_speech(text: str, voice_name: str):
-    if not text.strip():
-        raise ValueError("النص فارغ!")
-    communicate = edge_tts.Communicate(text, VOICES.get(voice_name, VOICES["female"]))
-    await communicate.save(OUTPUT_FILE)
+# مسار حفظ الملفات الصوتية
+AUDIO_PATH = "voice.mp3"
 
-# أوامر البوت
+# === دوال البوت ===
+
+# بدء البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "مرحبًا! أرسل لي أي نص وسأحوّله لصوت عربي.\n"
-        "للاختيار بين صوت رجل أو امرأة، اكتب: /voice male أو /voice female"
+        "مرحبًا! 🌟\nأرسل لي أي نص بالعربية لأحوّله إلى صوت.\n"
+        "يمكنك اختيار الصوت باستخدام /voice قبل الإرسال."
     )
 
-async def set_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and context.args[0].lower() in VOICES:
-        context.user_data["voice"] = context.args[0].lower()
-        await update.message.reply_text(f"تم تغيير الصوت إلى {context.args[0].lower()}")
-    else:
-        await update.message.reply_text("الرجاء اختيار صوت 'male' أو 'female'")
+# اختيار الصوت
+async def voice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("👩 أنثى", callback_data="female")],
+        [InlineKeyboardButton("👨 ذكر", callback_data="male")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("اختر الصوت المطلوب:", reply_markup=reply_markup)
 
-async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    voice = context.user_data.get("voice", "female")
+# حفظ اختيار الصوت
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    voice = query.data
+    context.user_data['voice'] = voice
+    await query.edit_message_text(f"✅ تم اختيار الصوت: {VOICE_NAMES[voice]}")
+
+# تحويل النص إلى صوت
+async def text_to_speech(text: str, voice: str):
+    communicate = edge_tts.Communicate(text, VOICES[voice])
+    await communicate.save(AUDIO_PATH)
+    return AUDIO_PATH
+
+# استقبال النصوص
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text:
+        await update.message.reply_text("❌ النص فارغ! حاول مرة أخرى.")
+        return
+
+    voice = context.user_data.get("voice", "female")  # افتراضي أنثى
+
+    msg = await update.message.reply_text("🔊 جاري تحويل النص إلى صوت...")
     try:
-        await text_to_speech(text, voice)
-        await update.message.reply_audio(audio=open(OUTPUT_FILE, "rb"))
+        audio_file = await text_to_speech(text, voice)
+        with open(audio_file, "rb") as f:
+            await update.message.reply_voice(voice=f)
+        await msg.delete()
     except Exception as e:
-        await update.message.reply_text(f"❌ حدث خطأ أثناء تحويل النص: {e}")
+        await msg.edit_text(f"❌ حدث خطأ أثناء التحويل:\n{e}")
 
-# تهيئة البوت
+# === تشغيل البوت ===
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("voice", set_voice))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, speak))
+    app.add_handler(CommandHandler("voice", voice_command))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    print("🤖 البوت يعمل...")
     app.run_polling()
 
 if __name__ == "__main__":
