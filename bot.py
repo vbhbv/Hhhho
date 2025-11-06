@@ -3,10 +3,6 @@ import telebot
 from google import genai
 from google.genai.errors import APIError
 import atexit
-import json
-
-# استيراد ملف الإدارة
-import admin 
 
 # -------------------------------------------------------------
 # 1. الإعدادات والثوابت والمفاتيح
@@ -15,12 +11,12 @@ import admin
 BOT_TOKEN = '6807502954:AAH5tOwXCjRXtF65wQFEDSkYeFBYIgUjblg' 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# يتم استبدال هذه المتغيرات بقراءة ملف settings.json
-# FORCED_CHANNEL_ID = os.environ.get("FORCED_CHANNEL_ID", None) 
-# FORCED_CHANNEL_LINK = os.environ.get("FORCED_CHANNEL_LINK", "https://t.me/your_channel_link") 
+# معلومات القناة الثابتة (للتجربة)
+# يجب أن يكون البوت مضافاً كـ "مشرف" في هذه القناة
+FORCED_CHANNEL_ID = '@iioll'  # معرف القناة (يجب أن يكون @username أو ID سلبي)
+FORCED_CHANNEL_LINK = 'https://t.me/iioll' 
 
 USER_DB_FILE = 'user_ids.txt'
-SETTINGS_FILE = 'settings.json' 
 user_ids = set() 
 
 # -------------------------------------------------------------
@@ -49,17 +45,8 @@ SYSTEM_PROMPT = (
 )
 
 # -------------------------------------------------------------
-# 3. وظائف إدارة المستخدمين والإعدادات والاشتراك
+# 3. وظائف إدارة المستخدمين والاشتراك
 # -------------------------------------------------------------
-
-def load_settings():
-    """تحميل إعدادات الاشتراك الإجباري من settings.json."""
-    try:
-        with open(SETTINGS_FILE, "r") as f: 
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError): 
-        # قيم افتراضية آمنة
-        return {"force_subscribe": False, "channel_id": None, "channel_link": "https://t.me/"}
 
 def load_users():
     """تحميل مُعرفات المستخدمين من الملف عند بدء التشغيل."""
@@ -84,12 +71,11 @@ def add_user(user_id):
         save_users() 
 
 def get_forced_subscription_markup():
-    """إنشاء لوحة المفاتيح للاشتراك الإجباري (يعتمد على load_settings)."""
-    settings = load_settings()
+    """إنشاء لوحة المفاتيح للاشتراك الإجباري."""
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton(
         text="قناة الاشتراك الإجباري 📢",
-        url=settings.get("channel_link", "https://t.me/")
+        url=FORCED_CHANNEL_LINK
     ))
     markup.add(telebot.types.InlineKeyboardButton(
         text="✅ تحقق من الاشتراك",
@@ -97,30 +83,24 @@ def get_forced_subscription_markup():
     ))
     return markup
 
-def is_subscribed(user_id, channel_id=None):
+def is_subscribed(user_id):
     """التحقق من حالة اشتراك المستخدم في القناة الإجبارية."""
-    settings = load_settings()
-    channel_id_to_check = settings.get("channel_id")
-    
-    if not settings.get("force_subscribe") or not channel_id_to_check: return True
+    if not FORCED_CHANNEL_ID: return True
     try:
-        member = bot.get_chat_member(channel_id_to_check, user_id)
+        member = bot.get_chat_member(FORCED_CHANNEL_ID, user_id)
         return member.status in ['member', 'creator', 'administrator']
     except Exception: return True 
 
 
 # -------------------------------------------------------------
-# 4. وظائف البوت الرئيسية (الإعراب)
+# 4. وظائف البوت الرئيسية (الإعراب والتحقق)
 # -------------------------------------------------------------
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     add_user(message.chat.id)
     
-    settings = load_settings() 
-    
-    # فحص الاشتراك الإجباري
-    if settings.get("force_subscribe") and not is_subscribed(message.chat.id):
+    if FORCED_CHANNEL_ID and not is_subscribed(message.chat.id):
         bot.reply_to(message, 
                      "⚠️ **يجب عليك الاشتراك في القناة أولاً لاستخدام البوت.**\n"
                      "يرجى الضغط على زر الاشتراك ثم زر التحقق.", 
@@ -136,10 +116,7 @@ def send_welcome(message):
 def handle_grammar_request(message):
     add_user(message.chat.id)
     
-    settings = load_settings() 
-    
-    # فحص الاشتراك الإجباري
-    if settings.get("force_subscribe") and not is_subscribed(message.chat.id):
+    if FORCED_CHANNEL_ID and not is_subscribed(message.chat.id):
         bot.reply_to(message, 
                      "⚠️ **يجب عليك الاشتراك في القناة أولاً لاستخدام البوت.**", 
                      parse_mode='Markdown', 
@@ -148,7 +125,6 @@ def handle_grammar_request(message):
         
     user_text = message.text
     
-    # تجنب إرسال أي نص قصير جداً أو طويل جداً
     if len(user_text) < 3 or len(user_text) > 500: 
         bot.reply_to(message, "⚠️ يرجى إرسال جملة عربية واضحة تتراوح بين 3 و 500 حرف.")
         return
@@ -176,26 +152,32 @@ def handle_grammar_request(message):
         print(f"❌ خطأ أثناء المعالجة: {e}")
         bot.edit_message_text("❌ حدث خطأ غير متوقع.", status_message.chat.id, status_message.message_id)
 
-
 # -------------------------------------------------------------
-# 5. التشغيل
+# 5. معالج زر التحقق من الاشتراك
+# -------------------------------------------------------------
+
+@bot.callback_query_handler(func=lambda call: call.data == 'check_sub')
+def check_sub_callback(call):
+    """معالج زر 'تحقق من الاشتراك' للمستخدم العادي."""
+    chat_id = call.message.chat.id
+    
+    if is_subscribed(chat_id):
+        bot.edit_message_text("✅ تم التحقق، يمكنك الآن استخدام البوت.", chat_id, call.message.message_id, reply_markup=None)
+        # إرسال رسالة الترحيب مرة أخرى لتمكين المستخدم من الاستخدام
+        send_welcome(call.message) 
+    else:
+        bot.answer_callback_query(call.id, "❌ لم يتم تأكيد اشتراكك بعد. يرجى الاشتراك والضغط مرة أخرى.")
+    
+# -------------------------------------------------------------
+# 6. التشغيل
 # -------------------------------------------------------------
 
 if __name__ == '__main__':
-    # **التهيئة الحاسم:** تمرير الدوال الصحيحة لتسجيل لوحة التحكم
-    admin.init_admin(
-        bot, 
-        is_subscribed,
-        get_forced_subscription_markup,
-        send_welcome
-    )
-    
     load_users()
     atexit.register(save_users)
     
     print("🚀 بدء تشغيل بوت الإعراب...")
     try:
-        # هنا يتم تشغيل البوت والبدء في تلقي الأوامر، بما فيها /admin
         bot.infinity_polling()
     except Exception as e:
         print(f"❌ فشل تشغيل البوت: {e}")
