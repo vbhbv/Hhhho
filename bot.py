@@ -1,29 +1,26 @@
-# bot.py
+import os
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import edge_tts
-import os
 
-# === إعدادات البوت ===
+# ================= إعدادات البوت =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # ضع التوكن في متغيرات Railway
 
-# أصوات عربية حديثة
+# أصوات عربية
 VOICES = {
     "female": "ar-SY-SalmaNeural",
     "male": "ar-SY-HamedNeural"
 }
 
-# تذكير بسيط لكل صوت
 VOICE_NAMES = {
     "female": "أنثى - SalmaNeural",
-    "male": "ذكر - HamedNeural"
+    "male": "ذكر - "
 }
 
-# مسار حفظ الملفات الصوتية
 AUDIO_PATH = "voice.mp3"
 
-# === دوال البوت ===
+# ================= دوال البوت =================
 
 # بدء البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,11 +66,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio_file = await text_to_speech(text, voice)
         with open(audio_file, "rb") as f:
             await update.message.reply_voice(voice=f)
+        os.remove(audio_file)  # حذف الملف بعد الإرسال
         await msg.delete()
     except Exception as e:
         await msg.edit_text(f"❌ حدث خطأ أثناء التحويل:\n{e}")
 
-# === تشغيل البوت ===
+# ================= تشغيل البوت =================
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
