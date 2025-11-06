@@ -4,7 +4,7 @@ from google import genai
 from google.genai.errors import APIError
 import atexit
 
-# استيراد الوظائف الإدارية من الملف المنفصل
+# استيراد ملف الإدارة
 import admin 
 
 # -------------------------------------------------------------
@@ -14,12 +14,9 @@ import admin
 BOT_TOKEN = '6807502954:AAH5tOwXCjRXtF65wQFEDSkYeFBYIgUjblg' 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# مُعرفات المسؤول والقناة الإجبارية (قابلة للتغيير عبر متغيرات البيئة)
-# يجب أن يكون البوت مشرفاً في القناة
 FORCED_CHANNEL_ID = os.environ.get("FORCED_CHANNEL_ID", None) 
 FORCED_CHANNEL_LINK = os.environ.get("FORCED_CHANNEL_LINK", "https://t.me/your_channel_link") 
 
-# ملف تخزين مُعرفات المستخدمين
 USER_DB_FILE = 'user_ids.txt'
 user_ids = set() 
 
@@ -42,7 +39,8 @@ if GEMINI_API_KEY:
         client = None
 
 SYSTEM_PROMPT = (
-    "أنت مدقق لغوي ومعلم نحو عربي قدير ومتخصص في الإعراب..." # (بقية التعليمات كما هي)
+    "أنت مدقق لغوي ومعلم نحو عربي قدير ومتخصص في الإعراب. "
+    "مهمتك هي إعراب الجملة التي يرسلها المستخدم إعراباً تفصيلياً وشاملاً..."
 )
 
 # -------------------------------------------------------------
@@ -73,30 +71,20 @@ def add_user(user_id):
         admin.user_ids.add(str_id)
         save_users() 
 
+# (بقية الدوال المساعدة مثل get_forced_subscription_markup و is_subscribed تظل كما هي)
 def get_forced_subscription_markup():
-    """إنشاء لوحة المفاتيح للاشتراك الإجباري."""
     markup = telebot.types.InlineKeyboardMarkup()
-    markup.add(telebot.types.InlineKeyboardButton(
-        text="قناة الاشتراك الإجباري 📢",
-        url=FORCED_CHANNEL_LINK
-    ))
-    markup.add(telebot.types.InlineKeyboardButton(
-        text="✅ تحقق من الاشتراك",
-        callback_data='check_sub'
-    ))
+    markup.add(telebot.types.InlineKeyboardButton(text="قناة الاشتراك الإجباري 📢", url=FORCED_CHANNEL_LINK))
+    markup.add(telebot.types.InlineKeyboardButton(text="✅ تحقق من الاشتراك", callback_data='check_sub'))
     return markup
 
 def is_subscribed(user_id):
-    """التحقق من حالة اشتراك المستخدم في القناة الإجبارية."""
-    if not FORCED_CHANNEL_ID:
-        return True
-
+    if not FORCED_CHANNEL_ID: return True
     try:
         member = bot.get_chat_member(FORCED_CHANNEL_ID, user_id)
         return member.status in ['member', 'creator', 'administrator']
-    except Exception:
-        # السماح بالمرور في حالة الخطأ لضمان استمرار البوت
-        return True 
+    except Exception: return True 
+
 
 # -------------------------------------------------------------
 # 4. وظائف البوت الرئيسية (الإعراب)
@@ -108,8 +96,7 @@ def send_welcome(message):
     
     if FORCED_CHANNEL_ID and not is_subscribed(message.chat.id):
         bot.reply_to(message, 
-                     "⚠️ **يجب عليك الاشتراك في القناة أولاً لاستخدام البوت.**\n"
-                     "يرجى الضغط على زر الاشتراك ثم زر التحقق.", 
+                     "⚠️ **يجب عليك الاشتراك في القناة أولاً لاستخدام البوت.**\n...", 
                      parse_mode='Markdown',
                      reply_markup=get_forced_subscription_markup())
         return
@@ -123,22 +110,18 @@ def handle_grammar_request(message):
     add_user(message.chat.id)
     
     if FORCED_CHANNEL_ID and not is_subscribed(message.chat.id):
-         # (رسالة الاشتراك الإجباري)
+        bot.reply_to(message, "⚠️ يجب عليك الاشتراك في القناة أولاً لاستخدام البوت....", parse_mode='Markdown', reply_markup=get_forced_subscription_markup())
         return
         
     user_text = message.text
     
-    if len(user_text) < 3 or len(user_text) > 500: 
-        bot.reply_to(message, "⚠️ يرجى إرسال جملة عربية واضحة تتراوح بين 3 و 500 حرف.")
-        return
-
+    # (بقية منطق الإعراب عبر Gemini يظل كما هو)
     status_message = bot.reply_to(message, "⏳ جارٍ تحليل الجملة نحويًا...")
 
     try:
         if not client:
             analysis_result = "❌ عذراً، لم يتم إعداد مفتاح Gemini API بشكل صحيح على الخادم."
         else:
-            # الحصول على الإعراب من Gemini
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=user_text,
@@ -148,20 +131,18 @@ def handle_grammar_request(message):
         
         bot.edit_message_text(analysis_result, status_message.chat.id, status_message.message_id, parse_mode='Markdown')
 
-    except APIError as e:
-        bot.edit_message_text("❌ عذراً، واجهت خطأً في الاتصال بخدمة الذكاء الاصطناعي.", status_message.chat.id, status_message.message_id)
-    except Exception as e:
+    except Exception:
         bot.edit_message_text("❌ حدث خطأ غير متوقع.", status_message.chat.id, status_message.message_id)
+
 
 # -------------------------------------------------------------
 # 5. التشغيل
 # -------------------------------------------------------------
 
 if __name__ == '__main__':
-    # تهيئة المتغيرات المشتركة في ملف admin.py
+    # **التصحيح الأهم:** تمرير الدالات والمتغيرات إلى admin.py وتسجيل المعالجات
     admin.init_admin(bot, FORCED_CHANNEL_ID, FORCED_CHANNEL_LINK, save_users)
     
-    # تحميل المستخدمين وبدء التشغيل
     load_users()
     atexit.register(save_users)
     
